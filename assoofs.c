@@ -86,19 +86,17 @@ int assoofs_fill_super(struct super_block *sb, void *data, int silent) {
     // 4.- Crear el inodo raíz y asignarle operaciones sobre inodos (i_op) y sobre directorios (i_fop)
 
     struct buffer_head *bh;
-    struct assofs_superblock_info *assofs_sb;
+    struct assoofs_super_block_info *assoofs_sb;
 
     struct inode *root_inode;
     root_inode = new_inode(sb);
 
     //1
     bh=sb_bread(sb, ASSOOFS_SUPERBLOCK_BLOCK_NUMBER); //Segundo arg bloque donde se almacenará el superbloque declarado en el archivo de cabecera
-    assofs_sb = (struct asso_superblock_info*)bh->b_data; //Se toman los datos del bloque de la funcion y se asignan a otra variable
-
-    brelse(bh); //Se libera la memoria de bh    
+    assoofs_sb = (struct assoofs_super_block_info*)bh->b_data; //Se toman los datos del bloque de la funcion y se asignan a otra variable
 
     //2
-    if(assofs_sb->magic != ASSOOFS_MAGIC || assofs_sb->block_size != ASSOOFS_DEFAULT_BLOCK_SIZE)
+    if(assoofs_sb->magic != ASSOOFS_MAGIC || assoofs_sb->block_size != ASSOOFS_DEFAULT_BLOCK_SIZE)
     {
         printk(KERN_WARNING "assoofs superblock invalid parameters");
         return -1;
@@ -119,10 +117,14 @@ int assoofs_fill_super(struct super_block *sb, void *data, int silent) {
     root_inode->i_op = &assoofs_inode_ops; //Se asignan operaciones de inodo
     root_inode->i_fop = &assoofs_dir_operations; //Se asginan operaciones de directorio
     root_inode->i_atime = root_inode->i_mtime = root_inode->i_ctime = current_time(root_inode); //Se le asignan las fechas (acceso, modificacion y creacion)
-    root_inode->i_private = assoofs_get_inode_info(sb, ASSOFS_ROOTDIR_INODE_NUMBER); //La informacion persistente
+
+
+     //root_inode->i_private = assoofs_get_inode_info(sb, ASSOOFS_ROOTDIR_INODE_NUMBER); La informacion persistente VER ERROR
 
 
     sb->s_root = d_make_root(root_inode); //Lo marco como nodo raiz
+
+    brelse(bh); //Se libera la memoria de bh    
 
     return 0;
 }
@@ -142,7 +144,7 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64
 
     //Se lee el bloque con el almacen de inodos
     bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
-    inode_info = (struct assoofs_inode_info)bh->b_data;
+    inode_info = (struct assoofs_inode_info*)bh->b_data;
 
     //Se busca un inodo con numero inode_no
     for(i = 0; i<afs_sb->inodes_count;i++){

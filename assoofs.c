@@ -85,11 +85,13 @@ int assoofs_fill_super(struct super_block *sb, void *data, int silent) {
     // 3.- Escribir la información persistente leída del dispositivo de bloques en el superbloque sb, incluído el campo s_op con las operaciones que soporta.
     // 4.- Crear el inodo raíz y asignarle operaciones sobre inodos (i_op) y sobre directorios (i_fop)
 
-
-    //1
     struct buffer_head *bh;
     struct assofs_superblock_info *assofs_sb;
 
+    struct inode *root_inode;
+    root_inode = new_inode(sb);
+
+    //1
     bh=sb_bread(sb, ASSOOFS_SUPERBLOCK_BLOCK_NUMBER); //Segundo arg bloque donde se almacenará el superbloque declarado en el archivo de cabecera
     assofs_sb = (struct asso_superblock_info*)bh->b_data; //Se toman los datos del bloque de la funcion y se asignan a otra variable
 
@@ -109,9 +111,6 @@ int assoofs_fill_super(struct super_block *sb, void *data, int silent) {
     sb->s_op = &assoofs_sops; //Se asignan las operaciones
 
     //4
-
-    struct inode *root_inode;
-    root_inode = new_inode(sb);
 
     inode_init_owner(root_inode, NULL, S_IFDIR); //se asignan los permisos, NULL porque es el dir raiz, no tiene dir padre, S_IFDIR para directorio, S_IFREG para fichero en 3er argumento
 

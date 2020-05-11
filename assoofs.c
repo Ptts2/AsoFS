@@ -76,64 +76,11 @@ static const struct super_operations assoofs_sops = {
 };
 
 /*
- *  Inicialización del superbloque
- */
-int assoofs_fill_super(struct super_block *sb, void *data, int silent) {   
-    printk(KERN_INFO "assoofs_fill_super request\n");
-    // 1.- Leer la información persistente del superbloque del dispositivo de bloques  
-    // 2.- Comprobar los parámetros del superbloque
-    // 3.- Escribir la información persistente leída del dispositivo de bloques en el superbloque sb, incluído el campo s_op con las operaciones que soporta.
-    // 4.- Crear el inodo raíz y asignarle operaciones sobre inodos (i_op) y sobre directorios (i_fop)
-
-    struct buffer_head *bh;
-    struct assoofs_super_block_info *assoofs_sb;
-
-    struct inode *root_inode;
-    root_inode = new_inode(sb);
-
-    //1
-    bh=sb_bread(sb, ASSOOFS_SUPERBLOCK_BLOCK_NUMBER); //Segundo arg bloque donde se almacenará el superbloque declarado en el archivo de cabecera
-    assoofs_sb = (struct assoofs_super_block_info*)bh->b_data; //Se toman los datos del bloque de la funcion y se asignan a otra variable
-
-    //2
-    if(assoofs_sb->magic != ASSOOFS_MAGIC || assoofs_sb->block_size != ASSOOFS_DEFAULT_BLOCK_SIZE)
-    {
-        printk(KERN_WARNING "assoofs superblock invalid parameters");
-        return -1;
-    }
-
-
-    //3
-    sb->s_magic = ASSOOFS_MAGIC; //Se asigna el numero magico
-    sb->s_maxbytes = ASSOOFS_DEFAULT_BLOCK_SIZE; //Se asigna el tamaño de bloque
-    sb->s_op = &assoofs_sops; //Se asignan las operaciones
-
-    //4
-
-    inode_init_owner(root_inode, NULL, S_IFDIR); //se asignan los permisos, NULL porque es el dir raiz, no tiene dir padre, S_IFDIR para directorio, S_IFREG para fichero en 3er argumento
-
-    root_inode->i_ino = ASSOOFS_ROOTDIR_INODE_NUMBER; //Se asigna numero de inodo
-    root_inode->i_sb = sb; //Se asigna un puntero al superbloque
-    root_inode->i_op = &assoofs_inode_ops; //Se asignan operaciones de inodo
-    root_inode->i_fop = &assoofs_dir_operations; //Se asginan operaciones de directorio
-    root_inode->i_atime = root_inode->i_mtime = root_inode->i_ctime = current_time(root_inode); //Se le asignan las fechas (acceso, modificacion y creacion)
-
-
-     //root_inode->i_private = assoofs_get_inode_info(sb, ASSOOFS_ROOTDIR_INODE_NUMBER); La informacion persistente VER ERROR
-
-
-    sb->s_root = d_make_root(root_inode); //Lo marco como nodo raiz
-
-    brelse(bh); //Se libera la memoria de bh    
-
-    return 0;
-}
-
-/*
  *  Obtener informacion persistente del inodo
  */
 struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64_t inode_no) {
 
+	
     struct assoofs_inode_info *inode_info = NULL;
     struct buffer_head *bh;
 
@@ -160,6 +107,60 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64
 
     brelse(bh); //Se liberan recursos
     return buffer;
+}
+
+/*
+ *  Inicialización del superbloque
+ */
+int assoofs_fill_super(struct super_block *sb, void *data, int silent) {   
+    printk(KERN_INFO "assoofs_fill_super request\n");
+    // 1.- Leer la información persistente del superbloque del dispositivo de bloques  
+    // 2.- Comprobar los parámetros del superbloque
+    // 3.- Escribir la información persistente leída del dispositivo de bloques en el superbloque sb, incluído el campo s_op con las operaciones que soporta.
+    // 4.- Crear el inodo raíz y asignarle operaciones sobre inodos (i_op) y sobre directorios (i_fop)
+
+    struct buffer_head *bh;
+    struct assoofs_super_block_info *assoofs_sb;
+
+    struct inode *root_inode;
+    
+
+    //1
+    bh=sb_bread(sb, ASSOOFS_SUPERBLOCK_BLOCK_NUMBER); //Segundo arg bloque donde se almacenará el superbloque declarado en el archivo de cabecera
+    assoofs_sb = (struct assoofs_super_block_info*)bh->b_data; //Se toman los datos del bloque de la funcion y se asignan a otra variable
+
+    //2
+    if(assoofs_sb->magic != ASSOOFS_MAGIC || assoofs_sb->block_size != ASSOOFS_DEFAULT_BLOCK_SIZE)
+    {
+        printk(KERN_ERR "assoofs superblock invalid parameters");
+        return -1;
+    }
+
+    //3
+    sb->s_magic = ASSOOFS_MAGIC; //Se asigna el numero magico
+	sb->s_fs_info = assoofs_sb; //Contenido del superbloque
+    sb->s_maxbytes = ASSOOFS_DEFAULT_BLOCK_SIZE; //Se asigna el tamaño de bloque
+    sb->s_op = &assoofs_sops; //Se asignan las operaciones
+
+    //4
+	root_inode = new_inode(sb);
+    inode_init_owner(root_inode, NULL, S_IFDIR); //se asignan los permisos, NULL porque es el dir raiz, no tiene dir padre, S_IFDIR para directorio, S_IFREG para fichero en 3er argumento
+
+    root_inode->i_ino = ASSOOFS_ROOTDIR_INODE_NUMBER; //Se asigna numero de inodo
+    root_inode->i_sb = sb; //Se asigna un puntero al superbloque
+    root_inode->i_op = &assoofs_inode_ops; //Se asignan operaciones de inodo
+    root_inode->i_fop = &assoofs_dir_operations; //Se asginan operaciones de directorio
+    root_inode->i_atime = root_inode->i_mtime = root_inode->i_ctime = current_time(root_inode); //Se le asignan las fechas (acceso, modificacion y creacion)
+
+    root_inode->i_private = assoofs_get_inode_info(sb, ASSOOFS_ROOTDIR_INODE_NUMBER); //La informacion persistente VER ERROR
+
+
+    sb->s_root = d_make_root(root_inode); //Lo marco como nodo raiz
+	
+	
+	
+    brelse(bh); //Se libera la memoria de bh
+    return 0;
 }
 
 /*

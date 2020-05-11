@@ -6,6 +6,14 @@
 #include <linux/slab.h>         /* kmem_cache            */
 #include "assoofs.h"
 
+
+/**
+* Funciones auxiliares
+*/
+
+struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64_t inode_no);
+static struct inode *assoofs_get_inode(struct super_block *sb, int ino);
+
 /*
  *  Operaciones sobre ficheros
  */
@@ -52,8 +60,60 @@ static struct inode_operations assoofs_inode_ops = {
     .mkdir = assoofs_mkdir,
 };
 
+static struct inode *assoofs_get_inode(struct super_block *sb, int ino){
+	
+	struct assoofs_inode_info *inode_info;
+	struct inode *inodo;
+	
+	inodo = new_inode(sb);
+	inode_info = assoofs_get_inode_info(sb,ino);
+	
+	if(S_ISDIR(inode_info->mode)) //Si es un directorio
+		inodo->i_fop = inodo->i_fop = &assoofs_dir_operations; //Se asginan operaciones de directorio
+	else if(S_ISREG(inode_info->mode)) //Si es un archivo
+		inodo->i_fop = inodo->i_fop = &assoofs_file_operations; //Se asginan operaciones de archivo
+	else
+		printk(KERN_ERR "Error en el tipo de inodo: no es directorio ni archivo.");
+	
+	inodo->i_ino = ino; //Se asigna numero de inodo
+    inodo->i_sb = sb; //Se asigna un puntero al superbloque
+    inodo->i_op = &assoofs_inode_ops; //Se asignan operaciones de inodo
+    inodo->i_atime = inodo->i_mtime = inodo->i_ctime = current_time(inodo); //Se le asignan las fechas (acceso, modificacion y creacion)
+	inodo->i_private = inode_info;
+	
+	
+	return inodo;
+}
+
 struct dentry *assoofs_lookup(struct inode *parent_inode, struct dentry *child_dentry, unsigned int flags) {
     printk(KERN_INFO "Lookup request\n");
+	
+	struct assoofs_inode_info *parent_info = parent_inode->i_private; 
+	struct super_block *sb = parent_inode->i_sb; //Se toma el superbloque
+	struct buffer_head *bh; //Bh para leer un bloque concreto
+	struct assoofs_dir_record_entry *record;
+	
+	int i;
+	
+	bh = sb_bread(sb, parent_info->data_block_number);
+	
+	record = (struct assoofs_dir_record_entry*)bh->b_data;
+	
+	for(i = 0; i<parent_info->dir_children_count;i++){ //Recorro el bucle tantas veces como archivos tenga
+		
+		if(!strcmp(record->filename, child_dentry->d_name.name)){ //Se compara el nombre con el del argumento (devuelve 0 si son iguales)
+			
+			//Se guarda en memoria la información del inodo
+			struct inode *inode = assoofs_get_inode(sb, record->inode_no);
+			
+			inode_init_owner(inode, parent_inode, ((struct assoofs_inode_info*)inode->i_private)->mode);
+			d_add(child_dentry, inode);
+			return NULL;
+		}
+		
+		record++;
+	}
+	
     return NULL;
 }
 
@@ -102,7 +162,7 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64
             memcpy(buffer, inode_info, sizeof(*buffer)); //Se copia el contenido de inode_info en buffer
             break;
         }
-        inode_info++;
+        inode_info++; //Pasa a apuntar al siguiente elemento
     }
 
     brelse(bh); //Se liberan recursos
@@ -154,10 +214,7 @@ int assoofs_fill_super(struct super_block *sb, void *data, int silent) {
 
     root_inode->i_private = assoofs_get_inode_info(sb, ASSOOFS_ROOTDIR_INODE_NUMBER); //La informacion persistente VER ERROR
 
-
     sb->s_root = d_make_root(root_inode); //Lo marco como nodo raiz
-	
-	
 	
     brelse(bh); //Se libera la memoria de bh
     return 0;

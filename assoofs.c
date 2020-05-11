@@ -85,7 +85,6 @@ static struct inode *assoofs_get_inode(struct super_block *sb, int ino){
 }
 
 struct dentry *assoofs_lookup(struct inode *parent_inode, struct dentry *child_dentry, unsigned int flags) {
-    printk(KERN_INFO "Lookup request\n");
 	
 	struct assoofs_inode_info *parent_info = parent_inode->i_private; 
 	struct super_block *sb = parent_inode->i_sb; //Se toma el superbloque
@@ -95,21 +94,23 @@ struct dentry *assoofs_lookup(struct inode *parent_inode, struct dentry *child_d
 	int i;
 	
 	bh = sb_bread(sb, parent_info->data_block_number);
-	
+	printk(KERN_INFO "Lookup in: ino=%llu, b=%llu\n",parent_info->inode_no, parent_info->data_block_number);
+
 	record = (struct assoofs_dir_record_entry*)bh->b_data;
 	
 	for(i = 0; i<parent_info->dir_children_count;i++){ //Recorro el bucle tantas veces como archivos tenga
-		
+		printk(KERN_INFO "Have file: '%s' (ino=%llu)\n", record->filename, record->inode_no);
 		if(!strcmp(record->filename, child_dentry->d_name.name)){ //Se compara el nombre con el del argumento (devuelve 0 si son iguales)
 			
 			//Se guarda en memoria la información del inodo
 			struct inode *inode = assoofs_get_inode(sb, record->inode_no);
 			
 			inode_init_owner(inode, parent_inode, ((struct assoofs_inode_info*)inode->i_private)->mode);
-			d_add(child_dentry, inode);
+			d_add(child_dentry, inode); //Para construir el arbol de inodos
 			return NULL;
 		}
 		
+		printk(KERN_ERR "No se encontro inodo para el nombre [%s]\n", child_dentry->d_name.name);
 		record++;
 	}
 	

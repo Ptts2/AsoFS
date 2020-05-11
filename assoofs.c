@@ -10,7 +10,6 @@
 /**
 * Funciones auxiliares
 */
-
 struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64_t inode_no);
 static struct inode *assoofs_get_inode(struct super_block *sb, int ino);
 

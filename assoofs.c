@@ -302,8 +302,10 @@ struct assoofs_inode_info *assoofs_search_inode_info(struct super_block *sb, str
     }
 
     if(start->inode_no == search->inode_no)
+        printk(KERN_INFO "inodo encontrado");
         return actual;
     else
+        printk(KERN_ERR "inodo no encontrado");
         return NULL;
 }
 

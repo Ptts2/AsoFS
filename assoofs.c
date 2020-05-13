@@ -74,9 +74,9 @@ static struct inode *assoofs_get_inode(struct super_block *sb, int ino){
 	inode_info = assoofs_get_inode_info(sb,ino);
 	
 	if(S_ISDIR(inode_info->mode)) //Si es un directorio
-		inodo->i_fop = inodo->i_fop = &assoofs_dir_operations; //Se asginan operaciones de directorio
+		inodo->i_fop = &assoofs_dir_operations; //Se asginan operaciones de directorio
 	else if(S_ISREG(inode_info->mode)) //Si es un archivo
-		inodo->i_fop = inodo->i_fop = &assoofs_file_operations; //Se asginan operaciones de archivo
+		inodo->i_fop = &assoofs_file_operations; //Se asginan operaciones de archivo
 	else
 		printk(KERN_ERR "Error en el tipo de inodo: no es directorio ni archivo.");
 	

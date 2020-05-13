@@ -12,6 +12,12 @@
 */
 struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64_t inode_no);
 static struct inode *assoofs_get_inode(struct super_block *sb, int ino);
+int assoofs_sb_get_a_freeblock(struct super_block *sb, uint64_t *block);
+void assoofs_save_sb_info(struct super_block *vsb);
+void assoofs_add_inode_info(struct super_block *sb, struct assoofs_inode_info *inode);
+int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *inode_info);
+struct assoofs_inode_info *assoofs_search_inode_info(struct super_block *sb, struct assoofs_inode_info *actual, struct
+assoofs_inode_info *search);
 
 /*
  *  Operaciones sobre ficheros
@@ -120,7 +126,185 @@ struct dentry *assoofs_lookup(struct inode *parent_inode, struct dentry *child_d
 
 static int assoofs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl) {
     printk(KERN_INFO "New file request\n");
+
+    struct inode *nodo;
+    struct assoofs_inode_info *inode_info;
+    struct super_block *sb;
+    struct buffer_head *bh;
+
+    struct asoofs_inode_info *parent_inode_info;
+    struct assoofs_dir_record_entry *dir_contents;
+    uint64_t count;
+
+    
+    sb = dir->i_sb;
+    count = ((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count; //Se obtiene el numero de inodos actual
+
+    if(count >= ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
+        printk(KERN_ERR "Error: el numero máximo de archivos o directorios soportados (%d) se ha superado", ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED);
+        return -1;
+    }
+    
+    nodo = new_inode(sb); //Se crea el nuevo inodo
+    nodo->i_no = count+1;
+
+    printk(KERN_INFO "inodo creado.");
+
+    //Información persistente del inodo
+    inode_info = kmalloc(sizeof(struct assoofs_inode_info),GFP_KERNEL);
+    inode_info->mode = mode;
+    inode_info->file_size = 0;
+    nodo->private = inode_info;
+    nodo->i_fop=&assoofs_file_operations; //Operaciones de ficheros
+
+    assoofs_sb_get_a_freeblock(sb, &inode_info->data_block_number); //Tomar el primer bloque libre
+
+    assoofs_add_inode_info(sb, inode_info); //Informacion persistente de nodo a disco
+
+    parent_inode_info = dir->i_private;
+    bh = sb_bread(sb, parent_inode_info->data_block_number); //Se lee el contenido en disco donde esta el dir padre
+
+    dir_contents = (struct assoofs_dir_record_entry*)bh->b_data;
+    dir_contents += parent_inode_info->dir_children_count; //Muevo el puntero hasta llegar al final del directorio
+    dir_contents->inode_no = inode_info->inode_no;
+
+    strcpy(dir_contents->filename, dentry->d_name.name);
+
+    //Escribir en disco
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+
+    brelse(bh);
+
+    parent_inode_info->dir_children_count++;
+    assoofs_save_inode_info(sb, parent_inode_info); //Pasar informacion a disco
+
+    printk(KERN_INFO "Inodo creado y añadido correctamente");
+
     return 0;
+}
+
+/*
+* Obtener un bloque libre
+*/
+int assoofs_sb_get_a_freeblock(struct super_block *sb, uint64_t *block){
+
+    struct assofs_super_block_info *assofs_sb = sb->s_fs_info;
+    int i;
+    int comprueba = 0;
+
+    for(i = 2; i<ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED; i++)
+        if(assoofs_sb->free_blocks & (1<<i)){
+            comprueba = 1;
+            break;
+        }
+
+    if(comprueba == 0){
+        printk(KERN_ERR "Error: No hay bloques libres");
+        return -1;
+    }
+
+    *block = i;
+
+    assoofs_sb->free_blocks &= ~(1 << i); //Marco el lugar como 0 en el mapa de bits
+    assoofs_save_sb_info(sb);
+
+    printk(KERN_INFO "Bloque libre obtenido correctamente");
+    return 0;
+}
+
+/*
+* Guardar informacion del superbloque en disco para que persista
+*/
+void assoofs_save_sb_info(struct super_block *vsb){
+
+    struct buffer_head *bh;
+    struct assoofs_super_block *sb = vsb->s_fs_info; //Informacion persistente
+    bh = sb_bread(vsb, ASSOOFS_SUPERBLOCK_BLOCK_NUMBER);
+    bh->b_data = (char*)sb; //Se sobreescriben los datos con nuevos datos
+
+    //Grabar en disco y liberar
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    brelse(bh);
+
+    printk(KERN_INFO "Informacion del superbloque actualizada correctamente");
+}
+
+/*
+* Guardar en disco informacion persistente de un nuevo inodo
+*/
+void assoofs_add_inode_info(struct super_block *sb, struct assoofs_inode_info *inode){
+
+    struct buffer_head *bh;
+    struct assoofs_inode_info *inode_info;
+    int count;
+
+    count = ((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count;
+    bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
+
+    inode_info = (struct assoofs_inode_info*)bh->b_data;
+
+    //Se busca el final del almacen de inodos y se copia en él el argumoento inode
+    inode_info = += assoofs_sb->inodes_count;
+    mempcy(inode_info, inode, sizeof(struct assoofs_inode_info));
+
+    //Guardar en disco para que persista
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    brelse(bh);
+
+    assoofs_sb->inodes_count++;
+    assoofs_save_sb_info(sb);
+
+    printk(KERN_INFO "Informacion de inodo guardada correctamente");
+
+}
+
+/*
+* Actualizar en disco la informacion persistente de un inodo
+*/
+int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *inode_info){
+
+    struct buffer_head *bh;
+    struct assoofs_inode_info *inode_pos;
+
+    bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER); //Obtener de disco el almacen de inodos
+
+    inode_pos = assoofs_search_inode_info(sb, (struct assoofs_inode_info*)bh->b_data, inode_info)
+
+    if(inode_pos == NULL){
+        printk(KERN_ERR "Error actualizando información de inodo");
+        brelse(bh);
+        return -1;
+    }
+
+    mempcy(inode_pos, inode_info, sizeof(*inode_pos)); //Se copia en el inodo buscado (inode_pos) la informacion del inodo actualizada
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    brelse(bh);
+
+    printk(KERN_INFO "Informacion del superbloque actualizada correctamente");
+    return 0;
+}
+
+/*
+* Busca un inodo en el almacen de inodos y lo devuelve
+*/
+struct assoofs_inode_info *assoofs_search_inode_info(struct super_block *sb, struct assoofs_inode_info *actual, struct assoofs_inode_info *search){
+
+    uint64_t count = 0;
+
+    while(actual->inode_no != search->inode_no && count < ((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count){
+
+        count++;
+        actual++;
+    }
+
+    if(start->inode_no == search->inode_no)
+        return actual;
+    else
+        return NULL;
 }
 
 static int assoofs_mkdir(struct inode *dir , struct dentry *dentry, umode_t mode) {

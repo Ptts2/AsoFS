@@ -35,13 +35,13 @@ const struct file_operations assoofs_file_operations = {
 ssize_t assoofs_read(struct file * filp, char __user * buf, size_t len, loff_t * ppos) {
     
     struct assoofs_inode_info *inode_info;
-    struct buffer_head bh;
+    struct buffer_head *bh;
     char *buffer;
     int nbytes;
 
     printk(KERN_INFO "Read request\n");
 
-    *inode_info = filp->f_path.dentry->d_inode->i_private;
+    inode_info = (struct assoofs_inode_info*) filp->f_path.dentry->d_inode->i_private;
 
     if(*ppos >= inode_info->file_size) return 0;
     
@@ -62,12 +62,12 @@ ssize_t assoofs_read(struct file * filp, char __user * buf, size_t len, loff_t *
 ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, loff_t * ppos) {
     
     struct assoofs_inode_info *inode_info;
-    struct buffer_head bh;
+    struct buffer_head *bh;
     char *buffer;
     
     printk(KERN_INFO "Write request\n");
 
-    *inode_info = filp->f_path.dentry->d_inode->i_private;
+    inode_info = (struct assoofs_inode_info*) filp->f_path.dentry->d_inode->i_private;
     if(*ppos >= inode_info->file_size) return 0;
     
     //Acceder al contenido del fichero
@@ -77,14 +77,14 @@ ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, l
     buffer +=*ppos;
 
     //Copiar en buffer buf el contenido del fichero escrito
-    copy_from_user(buffer, buf, nbytes); //Dir destino, direccion origen, cantidad de bytes
+    copy_from_user(buffer, buf, len); //Dir destino, direccion origen, cantidad de bytes
     *ppos += len;
 
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
 
     inode_info->file_size = *ppos;
-    assoofs_save_inode_inf(sb, inode_info);
+    assoofs_save_inode_info(filp->f_path.dentry->d_inode->i_sb, inode_info);
 
     printk(KERN_INFO "Write request completed correctly \n");
     return len;
@@ -107,9 +107,9 @@ static int assoofs_iterate(struct file *filp, struct dir_context *ctx) {
     struct inode *inode;
     struct super_block *sb;
     struct buffer_head *bh;
-    struct assoofs_dir_record_entry record;
+    struct assoofs_dir_record_entry *record;
     int i;
-    assoofs_inode_info *inode_info;
+    struct assoofs_inode_info *inode_info;
 
     printk(KERN_INFO "Iterate request\n");
 
@@ -119,7 +119,7 @@ static int assoofs_iterate(struct file *filp, struct dir_context *ctx) {
     sb = inode->i_sb; //Tomamos el superbloque del inodo
     inode_info = inode->i_private; //Parte persistente del inodo
 
-    if((!S_ISDIR(inode-info->mode))) return -1; //Si no es un directorio salimos
+    if((!S_ISDIR(inode_info->mode))) return -1; //Si no es un directorio salimos
 
     bh = sb_bread(sb, inode_info->data_block_number); //Se lee el bloque
     record = (struct assoofs_dir_record_entry *)bh->b_data;

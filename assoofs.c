@@ -238,6 +238,12 @@ static int assoofs_create(struct inode *dir, struct dentry *dentry, umode_t mode
     inode_info->mode = mode;
     inode_info->file_size = 0;
     nodo->i_private = inode_info; //Le asigno la informacion al inodo
+    
+
+    nodo->i_sb = sb;
+    nodo->i_op = &assoofs_inode_ops; 
+    nodo->i_atime = nodo->i_mtime = nodo->i_ctime = current_time(nodo); 
+
     inode_init_owner(nodo, dir, mode);
     d_add(dentry, nodo);
 
@@ -430,6 +436,11 @@ static int assoofs_mkdir(struct inode *dir , struct dentry *dentry, umode_t mode
     inode_info->inode_no = nodo->i_ino; 
     inode_info->mode = S_IFDIR | mode; //Por un bug
     inode_info->dir_children_count = 0;
+
+
+    nodo->i_sb = sb;
+    nodo->i_op = &assoofs_inode_ops; 
+    nodo->i_atime = nodo->i_mtime = nodo->i_ctime = current_time(nodo); 
 
     nodo->i_private = inode_info; //Le asigno la informacion al inodo
     inode_init_owner(nodo, dir, mode);

@@ -29,13 +29,64 @@ const struct file_operations assoofs_file_operations = {
     .write = assoofs_write,
 };
 
+/*
+* ppos desplazamientro respecto al principio del fichero
+*/
 ssize_t assoofs_read(struct file * filp, char __user * buf, size_t len, loff_t * ppos) {
+    
+    struct assoofs_inode_info *inode_info;
+    struct buffer_head bh;
+    char *buffer;
+    int nbytes;
+
     printk(KERN_INFO "Read request\n");
-    return 0;
+
+    *inode_info = filp->f_path.dentry->d_inode->i_private;
+
+    if(*ppos >= inode_info->file_size) return 0;
+    
+    //Acceder al contenido del fichero
+    bh = sb_bread(filp->f_path.dentry->d_inode->i_sb, inode_info->data_block_number);
+    buffer = (char *)bh->b_data;
+
+    //Copiar en buf buffer el contenido del fichero leido
+    nbytes = min( (size_t)inode_info->file_size, len ); //Minimo entre el tamaño del fichero y lo que haya dicho el usuario
+    copy_to_user(buf, buffer, nbytes); //Dir destino, direccion origen, cantidad de bytes
+    *ppos += nbytes;
+
+    printk(KERN_INFO "Read request completed correctly \n");
+
+    return nbytes;
 }
 
 ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, loff_t * ppos) {
+    
+    struct assoofs_inode_info *inode_info;
+    struct buffer_head bh;
+    char *buffer;
+    
     printk(KERN_INFO "Write request\n");
+
+    *inode_info = filp->f_path.dentry->d_inode->i_private;
+    if(*ppos >= inode_info->file_size) return 0;
+    
+    //Acceder al contenido del fichero
+    bh = sb_bread(filp->f_path.dentry->d_inode->i_sb, inode_info->data_block_number);
+
+    buffer = (char *)bh->b_data;
+    buffer +=*ppos;
+
+    //Copiar en buffer buf el contenido del fichero escrito
+    copy_from_user(buffer, buf, nbytes); //Dir destino, direccion origen, cantidad de bytes
+    *ppos += len;
+
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+
+    inode_info->file_size = *ppos;
+    assoofs_save_inode_inf(sb, inode_info);
+
+    printk(KERN_INFO "Write request completed correctly \n");
     return len;
 }
 

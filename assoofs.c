@@ -149,11 +149,15 @@ static int assoofs_create(struct inode *dir, struct dentry *dentry, umode_t mode
 
     printk(KERN_INFO "inodo creado.");
 
-    //Información persistente del inodo
+    //Información persistente del inodo en disco
     inode_info = kmalloc(sizeof(struct assoofs_inode_info),GFP_KERNEL);
+    inode_info->inode_no = nodo->i_ino; 
     inode_info->mode = mode;
     inode_info->file_size = 0;
-    nodo->i_private = inode_info;
+    nodo->i_private = inode_info; //Le asigno la informacion al inodo
+    inode_init_owner(nodo, dir, mode);
+    d_add(dentry, nodo);
+
     nodo->i_fop=&assoofs_file_operations; //Operaciones de ficheros
 
     assoofs_sb_get_a_freeblock(sb, &inode_info->data_block_number); //Tomar el primer bloque libre
@@ -178,7 +182,7 @@ static int assoofs_create(struct inode *dir, struct dentry *dentry, umode_t mode
     parent_inode_info->dir_children_count++;
     assoofs_save_inode_info(sb, parent_inode_info); //Pasar informacion a disco
 
-    printk(KERN_INFO "Inodo creado y añadido correctamente");
+    printk(KERN_INFO "Inodo para archivo creado y añadido correctamente");
 
     return 0;
 }
@@ -308,8 +312,72 @@ struct assoofs_inode_info *assoofs_search_inode_info(struct super_block *sb, str
     }
 }
 
+/*
+* dir -> inodo que representa el directorio donde queremos crear el dir
+* dentry -> directorio padre
+*/
 static int assoofs_mkdir(struct inode *dir , struct dentry *dentry, umode_t mode) {
+    
+
+    struct inode *nodo;
+    struct assoofs_inode_info *inode_info;
+    struct super_block *sb;
+    struct buffer_head *bh;
+
+    struct assoofs_inode_info *parent_inode_info;
+    struct assoofs_dir_record_entry *dir_contents;
+    uint64_t count;
+
     printk(KERN_INFO "New directory request\n");
+    sb = dir->i_sb;
+    count = ((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count; //Se obtiene el numero de inodos actual
+
+    if(count >= ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
+        printk(KERN_ERR "Error: el numero máximo de archivos o directorios soportados (%d) se ha superado", ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED);
+        return -1;
+    }
+    
+    nodo = new_inode(sb); //Se crea el nuevo inodo
+    nodo->i_ino = count+1;
+
+    printk(KERN_INFO "inodo creado.");
+
+    //Información persistente del inodo en disco
+    inode_info = kmalloc(sizeof(struct assoofs_inode_info),GFP_KERNEL);
+    inode_info->inode_no = nodo->i_ino; 
+    inode_info->mode = S_IFDIR | mode; //Por un bug
+    inode_info->dir_children_count = 0;
+
+    nodo->i_private = inode_info; //Le asigno la informacion al inodo
+    inode_init_owner(nodo, dir, mode);
+    d_add(dentry, nodo);
+
+    nodo->i_fop=&assoofs_dir_operations; //Operaciones de directorios
+
+    assoofs_sb_get_a_freeblock(sb, &inode_info->data_block_number); //Tomar el primer bloque libre
+
+    assoofs_add_inode_info(sb, inode_info); //Informacion persistente de nodo a disco
+
+    parent_inode_info = dir->i_private;
+    bh = sb_bread(sb, parent_inode_info->data_block_number); //Se lee el contenido en disco donde esta el dir padre
+
+    dir_contents = (struct assoofs_dir_record_entry*)bh->b_data;
+    dir_contents += parent_inode_info->dir_children_count; //Muevo el puntero hasta llegar al final del directorio
+    dir_contents->inode_no = inode_info->inode_no;
+
+    strcpy(dir_contents->filename, dentry->d_name.name);
+
+    //Escribir en disco
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+
+    brelse(bh);
+
+    parent_inode_info->dir_children_count++;
+    assoofs_save_inode_info(sb, parent_inode_info); //Pasar informacion a disco
+
+    printk(KERN_INFO "Inodo para directorio creado y añadido correctamente");
+
     return 0;
 }
 

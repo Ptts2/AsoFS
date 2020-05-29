@@ -47,15 +47,28 @@ ssize_t assoofs_read(struct file * filp, char __user * buf, size_t len, loff_t *
     
     //Acceder al contenido del fichero
     bh = sb_bread(filp->f_path.dentry->d_inode->i_sb, inode_info->data_block_number);
+
+    if(!bh) {
+        printk(KERN_ERR "El intento de leer el bloque numero [%llu] fallo. \n", inode_info->data_block_number);
+        return 0;
+    }
+
     buffer = (char *)bh->b_data;
 
     //Copiar en buf buffer el contenido del fichero leido
     nbytes = min( (size_t)inode_info->file_size, len ); //Minimo entre el tamaño del fichero y lo que haya dicho el usuario
-    copy_to_user(buf, buffer, nbytes); //Dir destino, direccion origen, cantidad de bytes
+    
+    if(copy_to_user(buf, buffer, nbytes)){ //Dir destino, direccion origen, cantidad de bytes
+        
+        brelse(bh);
+        printk(KERN_ERR "Error copiando el contenido del archivo al espacio de usuario\n");
+        return -1;
+    } 
+    
     *ppos += nbytes;
-
+    brelse(bh);
     printk(KERN_INFO "Read request completed correctly \n");
-
+    
     return nbytes;
 }
 
@@ -63,15 +76,19 @@ ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, l
     
     struct assoofs_inode_info *inode_info;
     struct buffer_head *bh;
+    struct super_block *sb;
+
     char *buffer;
     
     printk(KERN_INFO "Write request\n");
 
     inode_info = (struct assoofs_inode_info*) filp->f_path.dentry->d_inode->i_private;
+    sb = filp->f_path.dentry->d_inode->i_sb;
+    
     if(*ppos >= inode_info->file_size) return 0;
     
     //Acceder al contenido del fichero
-    bh = sb_bread(filp->f_path.dentry->d_inode->i_sb, inode_info->data_block_number);
+    bh = sb_bread(sb, inode_info->data_block_number);
 
     buffer = (char *)bh->b_data;
     buffer +=*ppos;
@@ -79,12 +96,13 @@ ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, l
     //Copiar en buffer buf el contenido del fichero escrito
     copy_from_user(buffer, buf, len); //Dir destino, direccion origen, cantidad de bytes
     *ppos += len;
+    inode_info->file_size = *ppos;
 
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
+    brelse(bh);
 
-    inode_info->file_size = *ppos;
-    assoofs_save_inode_info(filp->f_path.dentry->d_inode->i_sb, inode_info);
+    assoofs_save_inode_info(sb, inode_info);
 
     printk(KERN_INFO "Write request completed correctly \n");
     return len;
@@ -108,8 +126,10 @@ static int assoofs_iterate(struct file *filp, struct dir_context *ctx) {
     struct super_block *sb;
     struct buffer_head *bh;
     struct assoofs_dir_record_entry *record;
-    int i;
     struct assoofs_inode_info *inode_info;
+
+    int i;
+
 
     printk(KERN_INFO "Iterate request\n");
 
@@ -124,7 +144,7 @@ static int assoofs_iterate(struct file *filp, struct dir_context *ctx) {
     bh = sb_bread(sb, inode_info->data_block_number); //Se lee el bloque
     record = (struct assoofs_dir_record_entry *)bh->b_data;
 
-    for(i = 0; i> inode_info->dir_children_count; i++){
+    for(i = 0; i< inode_info->dir_children_count; i++){
 
         dir_emit(ctx, record->filename, ASSOOFS_FILENAME_MAXLEN, record->inode_no, DT_UNKNOWN); //Nombre del archivo y numero
         ctx->pos += sizeof(struct assoofs_dir_record_entry);

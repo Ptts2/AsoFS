@@ -86,8 +86,6 @@ ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, l
     sb = filp->f_path.dentry->d_inode->i_sb;
     inode_info = (struct assoofs_inode_info*) filp->f_path.dentry->d_inode->i_private;
 
-    //if(*ppos >= inode_info->file_size) return 0;
-
     //Acceder al contenido del fichero
     bh = sb_bread(sb, inode_info->data_block_number);
 

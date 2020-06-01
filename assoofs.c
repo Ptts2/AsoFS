@@ -6,8 +6,12 @@
 #include <linux/slab.h>         /* kmem_cache            */
 #include "assoofs.h"
 
+/*
+* Variables globales
+*/
+static struct kmem_cache *assoofs_inode_cache;
 
-/**
+/*
 * Funciones auxiliares
 */
 struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64_t inode_no);
@@ -19,6 +23,7 @@ int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *i
 static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umode_t mode);
 struct assoofs_inode_info *assoofs_search_inode_info(struct super_block *sb, struct assoofs_inode_info *actual, struct
 assoofs_inode_info *search);
+void assoofs_destroy_inode(struct inode *inode);
 
 /*
  *  Operaciones sobre ficheros
@@ -406,7 +411,7 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
     nodo->i_ino = count+1;
 
     //Información persistente del inodo en disco
-    inode_info = kmalloc(sizeof(struct assoofs_inode_info),GFP_KERNEL);
+    inode_info = inode_info = kmem_cache_alloc(assoofs_inode_cache, GFP_KERNEL);
     inode_info->inode_no = nodo->i_ino; 
     inode_info->mode = mode;
 
@@ -458,9 +463,15 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
  *  Operaciones sobre el superbloque
  */
 static const struct super_operations assoofs_sops = {
-    .drop_inode = generic_delete_inode,
+    .drop_inode = assoofs_destroy_inode,
 };
+void assoofs_destroy_inode(struct inode *inode) {
 
+    struct assoofs_inode *inode_info = inode->i_private;
+    printk(KERN_INFO "Eliminando datos privados del nodo %p ( %lu)\n", inode_info, inode->i_ino);
+    kmem_cache_free(assoofs_inode_cache, inode_info);
+
+}
 /*
  *  Obtener informacion persistente del inodo
  */
@@ -484,7 +495,7 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64
 
         if(inode_info->inode_no == inode_no) {
 
-            buffer = kmalloc(sizeof(struct assoofs_inode_info), GFP_KERNEL); //Se asigna memoria al buffer
+            buffer = kmem_cache_alloc(assoofs_inode_cache, GFP_KERNEL); //Se asigna memoria al buffer 
             memcpy(buffer, inode_info, sizeof(*buffer)); //Se copia el contenido de inode_info en buffer
             break;
         }
@@ -581,6 +592,8 @@ static int __init assoofs_init(void) {
     printk(KERN_INFO "assoofs_init request\n");
     ret = register_filesystem(&assoofs_type);
 
+    assoofs_inode_cache = kmem_cache_create("assoofs_inode_cache", sizeof(struct assoofs_inode_info), 0, (SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD), NULL);
+
     if(ret == 0)
         printk(KERN_INFO "assoofs registrado correctamente");
     else
@@ -593,6 +606,8 @@ static void __exit assoofs_exit(void) {
 
     int ret;
     printk(KERN_INFO "assoofs_exit request\n");
+
+    kmem_cache_destroy(assoofs_inode_cache);
 
     ret = unregister_filesystem(&assoofs_type);
     

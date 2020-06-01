@@ -411,7 +411,7 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
     nodo->i_ino = count+1;
 
     //Información persistente del inodo en disco
-    inode_info = inode_info = kmem_cache_alloc(assoofs_inode_cache, GFP_KERNEL);
+    inode_info = kmem_cache_alloc(assoofs_inode_cache, GFP_KERNEL);
     inode_info->inode_no = nodo->i_ino; 
     inode_info->mode = mode;
 
@@ -459,12 +459,6 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
     return 0;
 }
 
-/*
- *  Operaciones sobre el superbloque
- */
-static const struct super_operations assoofs_sops = {
-    .drop_inode = assoofs_destroy_inode,
-};
 void assoofs_destroy_inode(struct inode *inode) {
 
     struct assoofs_inode *inode_info = inode->i_private;
@@ -472,6 +466,15 @@ void assoofs_destroy_inode(struct inode *inode) {
     kmem_cache_free(assoofs_inode_cache, inode_info);
 
 }
+
+/*
+ *  Operaciones sobre el superbloque
+ */
+static const struct super_operations assoofs_sops = {
+    .destroy_inode = assoofs_destroy_inode,
+};
+
+
 /*
  *  Obtener informacion persistente del inodo
  */

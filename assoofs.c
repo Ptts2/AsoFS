@@ -10,7 +10,9 @@
 * Variables globales
 */
 static struct kmem_cache *assoofs_inode_cache;
-
+static DEFINE_MUTEX(assoofs_sb_lock); //Semaforo mutex para el superbloque
+static DEFINE_MUTEX(assoofs_inodes_lock); //Semaforo mutex para los inodos
+static DEFINE_MUTEX(assoofs_directory_children_update_lock); //Semaforo mutex para actualizar los directorios
 /*
 * Funciones auxiliares
 */
@@ -111,9 +113,14 @@ ssize_t assoofs_write(struct file * filp, const char __user * buf, size_t len, l
     sync_dirty_buffer(bh);
     brelse(bh);
 
+    if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
     inode_info->file_size = *ppos;
     assoofs_save_inode_info(sb, inode_info);
 
+    mutex_unlock(&assoofs_inodes_lock);
     printk(KERN_INFO "Write request completed correctly \n");
 
 	return len;
@@ -248,6 +255,12 @@ int assoofs_sb_get_a_freeblock(struct super_block *sb, uint64_t *block){
 
     struct assoofs_super_block_info *assoofs_sb;
     int i;
+
+    if (mutex_lock_interruptible(&assoofs_sb_lock)) {
+
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
    
     assoofs_sb = sb->s_fs_info;
 
@@ -268,6 +281,8 @@ int assoofs_sb_get_a_freeblock(struct super_block *sb, uint64_t *block){
     assoofs_save_sb_info(sb);
 
     printk(KERN_INFO "Bloque libre obtenido correctamente");
+
+    mutex_unlock(&assoofs_sb_lock);
     return 0;
 }
 
@@ -300,10 +315,21 @@ void assoofs_add_inode_info(struct super_block *sb, struct assoofs_inode_info *i
     struct assoofs_inode_info *inode_info;
     struct assoofs_super_block_info* assoofs_sb;
 
+
+    if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return;
+	}
+
     assoofs_sb = sb->s_fs_info; 
     bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
 
     inode_info = (struct assoofs_inode_info*)bh->b_data;
+
+    if (mutex_lock_interruptible(&assoofs_sb_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return;
+	}
 
     //Se busca el final del almacen de inodos y se copia en él el argumoento inode
     inode_info += assoofs_sb->inodes_count;
@@ -317,8 +343,11 @@ void assoofs_add_inode_info(struct super_block *sb, struct assoofs_inode_info *i
     sync_dirty_buffer(bh);
     brelse(bh);
 
+
     printk(KERN_INFO "Informacion de inodo guardada correctamente");
 
+    mutex_unlock(&assoofs_inodes_lock);
+	mutex_unlock(&assoofs_sb_lock);
 }
 
 /*
@@ -330,6 +359,12 @@ int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *i
     struct assoofs_inode_info *inode_pos;
 
     bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER); //Obtener de disco el almacen de inodos
+
+
+    if (mutex_lock_interruptible(&assoofs_sb_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
 
     inode_pos = assoofs_search_inode_info(sb, (struct assoofs_inode_info*)bh->b_data, inode_info);
 
@@ -345,6 +380,7 @@ int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *i
     brelse(bh);
 
     printk(KERN_INFO "Informacion del superbloque actualizada correctamente");
+    mutex_unlock(&assoofs_sb_lock);
     return 0;
 }
 
@@ -394,12 +430,17 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
 
     uint64_t count;
 
+    if (mutex_lock_interruptible(&assoofs_directory_children_update_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
    
     sb = dir->i_sb;
     count = ((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count; //Se obtiene el numero de inodos actual
 
     if(count >= ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
         printk(KERN_ERR "Error: el numero máximo de archivos o directorios soportados (%d) se ha superado", ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED);
+        mutex_unlock(&assoofs_directory_children_update_lock);
         return -1;
     }
     
@@ -420,7 +461,7 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
         nodo->i_fop=&assoofs_dir_operations; //Operaciones de directorios
         inode_info->dir_children_count = 0;
     } else if(S_ISREG(mode)){ // Si es un archivo
-         printk(KERN_INFO "New file request\n");
+        printk(KERN_INFO "New file request\n");
         nodo->i_fop=&assoofs_file_operations; //Operaciones de ficheros
         inode_info->file_size = 0;
     }
@@ -447,9 +488,17 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
 
     brelse(bh);
 
+
+	if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
+		mutex_unlock(&assoofs_directory_children_update_lock);
+        printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
     parent_inode_info->dir_children_count++;
     assoofs_save_inode_info(sb, parent_inode_info); //Pasar informacion a disco
 
+    mutex_unlock(&assoofs_inodes_lock);
+	mutex_unlock(&assoofs_directory_children_update_lock);
 
     inode_init_owner(nodo, dir, mode);
     d_add(dentry, nodo);
@@ -493,6 +542,10 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64
     bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER);
     inode_info = (struct assoofs_inode_info*)bh->b_data;
 
+    if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return NULL;
+	}
     //Se busca un inodo con numero inode_no
     for(i = 0; i<afs_sb->inodes_count;i++){
 
@@ -505,6 +558,7 @@ struct assoofs_inode_info *assoofs_get_inode_info(struct super_block *sb, uint64
         inode_info++; //Pasa a apuntar al siguiente elemento
     }
 
+    mutex_unlock(&assoofs_inodes_lock);
     brelse(bh); //Se liberan recursos
     return buffer;
 }

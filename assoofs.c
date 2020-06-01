@@ -180,11 +180,63 @@ static int assoofs_iterate(struct file *filp, struct dir_context *ctx) {
 static int assoofs_create(struct inode *dir, struct dentry *dentry, umode_t mode, bool excl);
 struct dentry *assoofs_lookup(struct inode *parent_inode, struct dentry *child_dentry, unsigned int flags);
 static int assoofs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode);
+static int assoofs_unlink(struct inode *dir,struct dentry *dentry);
 static struct inode_operations assoofs_inode_ops = {
     .create = assoofs_create,
     .lookup = assoofs_lookup,
     .mkdir = assoofs_mkdir,
+    .unlink = assoofs_unlink,
 };
+
+static int assoofs_unlink(struct inode *dir, struct dentry *dentry){
+
+    struct super_block *sb;
+    struct buffer_head *bh;
+
+    struct assoofs_super_block_info *sb_info;
+    struct assoofs_inode_info *parent_inode_info;
+    struct assoofs_inode_info *nodo_buscado_info;
+
+    uint64_t block_no = -1;
+
+    printk(KERN_INFO "Peticion a eliminar un archivo.\n");
+
+    if (mutex_lock_interruptible(&assoofs_directory_children_update_lock)) {
+		printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
+
+    parent_inode_info = (struct assoofs_inode_info *)dir->i_private;
+    sb = dir->i_sb;
+    bh = sb_bread(sb, parent_inode_info->data_block_number);
+
+    //Busco el bloque del archivo
+    nodo_buscado_info = (struct assoofs_inode_info *)dentry->d_inode->i_private;
+    block_no = nodo_buscado_info->data_block_number;
+
+    sb_info = sb->s_fs_info;
+    sb_info->free_blocks |= (1 << block_no); //Libero el bloque
+
+    if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
+		mutex_unlock(&assoofs_directory_children_update_lock);
+        printk(KERN_ERR "No se pudo bloquear el mutex\n");
+		return -1;
+	}
+
+    parent_inode_info->dir_children_count--;
+    assoofs_save_inode_info(sb, parent_inode_info);
+
+    mark_buffer_dirty(bh);
+    sync_dirty_buffer(bh);
+    brelse(bh);
+
+    mutex_unlock(&assoofs_inodes_lock);
+	mutex_unlock(&assoofs_directory_children_update_lock);
+
+    printk(KERN_INFO "Archivo borrado correctamente");
+    return 0;
+
+}
 
 static struct inode *assoofs_get_inode(struct super_block *sb, int ino){
 	
@@ -266,18 +318,19 @@ int assoofs_sb_get_a_freeblock(struct super_block *sb, uint64_t *block){
 
     for(i = 2; i<ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED; i++)
         if(assoofs_sb->free_blocks & (1<<i)){
-            printk(KERN_INFO " El bloque numero %d esta libre", i);
+            printk(KERN_INFO "El bloque numero %d esta libre", i);
             break;
         }
 
     if(i>= ASSOOFS_MAX_FILESYSTEM_OBJECTS_SUPPORTED){
+        mutex_unlock(&assoofs_sb_lock);
         printk(KERN_ERR "Error: No hay bloques libres");
         return -1;
     }
 
     *block = i;
 
-    assoofs_sb->free_blocks &= ~(1 << i); //Marco el lugar como 0 en el mapa de bits
+    assoofs_sb->free_blocks |= (1 << i); //Marco el lugar como 0 en el mapa de bits
     assoofs_save_sb_info(sb);
 
     printk(KERN_INFO "Bloque libre obtenido correctamente");
@@ -327,6 +380,7 @@ void assoofs_add_inode_info(struct super_block *sb, struct assoofs_inode_info *i
     inode_info = (struct assoofs_inode_info*)bh->b_data;
 
     if (mutex_lock_interruptible(&assoofs_sb_lock)) {
+        mutex_unlock(&assoofs_inodes_lock);
 		printk(KERN_ERR "No se pudo bloquear el mutex\n");
 		return;
 	}
@@ -511,6 +565,8 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
 void assoofs_destroy_inode(struct inode *inode) {
 
     struct assoofs_inode *inode_info = inode->i_private;
+    struct assoofs_super_block_info *sbi = inode->i_sb->s_fs_info;
+    sbi->inodes_count--;
     printk(KERN_INFO "Eliminando datos privados del nodo %p ( %lu)\n", inode_info, inode->i_ino);
     kmem_cache_free(assoofs_inode_cache, inode_info);
 

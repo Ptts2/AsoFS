@@ -196,8 +196,12 @@ static int assoofs_unlink(struct inode *dir, struct dentry *dentry){
     struct assoofs_super_block_info *sb_info;
     struct assoofs_inode_info *parent_inode_info;
     struct assoofs_inode_info *nodo_buscado_info;
+	
+	struct assoofs_inode_info *nodo_cambio_info;
 
     uint64_t block_no = -1;
+	uint64_t inode_no = -1;
+	int i;
 
     printk(KERN_INFO "Peticion a eliminar un archivo.\n");
 
@@ -210,13 +214,30 @@ static int assoofs_unlink(struct inode *dir, struct dentry *dentry){
     sb = dir->i_sb;
     bh = sb_bread(sb, parent_inode_info->data_block_number);
 
-    //Busco el bloque del archivo
+    //Busco el bloque y el inodo del archivo
     nodo_buscado_info = (struct assoofs_inode_info *)dentry->d_inode->i_private;
     block_no = nodo_buscado_info->data_block_number;
+	inode_no = nodo_buscado_info->inode_no;
+	
+	//Recorro los nodos desde el que elimino hasta el final restandoles una posicion y asigno -1 al que borro
+	
 
+	for(i = inode_no+1; i<=parent_inode_info->dir_children_count;i++){
+		
+		printk(KERN_INFO "Buscando inodo %d",i);
+		nodo_cambio_info = assoofs_get_inode_info(sb, i);
+		nodo_cambio_info->inode_no--;
+		assoofs_add_inode_info(sb, nodo_cambio_info);
+		printk(KERN_INFO "Inodo %d modificado, ahora es el nodo %lld", i, nodo_cambio_info->inode_no);
+		
+	}
+
+	//
     sb_info = sb->s_fs_info;
     sb_info->free_blocks |= (1 << block_no); //Libero el bloque
-
+	
+	assoofs_save_sb_info(sb);
+	
     if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
 		mutex_unlock(&assoofs_directory_children_update_lock);
         printk(KERN_ERR "No se pudo bloquear el mutex\n");
@@ -414,7 +435,6 @@ int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *i
 
     bh = sb_bread(sb, ASSOOFS_INODESTORE_BLOCK_NUMBER); //Obtener de disco el almacen de inodos
 
-
     if (mutex_lock_interruptible(&assoofs_sb_lock)) {
 		printk(KERN_ERR "No se pudo bloquear el mutex\n");
 		return -1;
@@ -423,6 +443,7 @@ int assoofs_save_inode_info(struct super_block *sb, struct assoofs_inode_info *i
     inode_pos = assoofs_search_inode_info(sb, (struct assoofs_inode_info*)bh->b_data, inode_info);
 
     if(inode_pos == NULL){
+		mutex_unlock(&assoofs_sb_lock);
         printk(KERN_ERR "Error actualizando información de inodo");
         brelse(bh);
         return -1;
@@ -565,8 +586,10 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
 void assoofs_destroy_inode(struct inode *inode) {
 
     struct assoofs_inode *inode_info = inode->i_private;
-    struct assoofs_super_block_info *sbi = inode->i_sb->s_fs_info;
-    sbi->inodes_count--;
+    struct super_block *sb = inode->i_sb;
+	
+	((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count--;
+	assoofs_save_sb_info(sb);
     printk(KERN_INFO "Eliminando datos privados del nodo %p ( %lu)\n", inode_info, inode->i_ino);
     kmem_cache_free(assoofs_inode_cache, inode_info);
 

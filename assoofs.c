@@ -190,70 +190,89 @@ static struct inode_operations assoofs_inode_ops = {
 
 static int assoofs_unlink(struct inode *dir, struct dentry *dentry){
 
-    struct super_block *sb;
-    struct buffer_head *bh;
-
-    struct assoofs_super_block_info *sb_info;
-    struct assoofs_inode_info *parent_inode_info;
-    struct assoofs_inode_info *nodo_buscado_info;
-	
-	struct assoofs_inode_info *nodo_cambio_info;
-
-    uint64_t block_no = -1;
+	uint64_t block_no = -1;
 	uint64_t inode_no = -1;
-	int i;
+	uint64_t last_inode_no = -1;
+	uint64_t last_block_no = -1;
 
+	struct super_block *sb;
+	struct buffer_head *bh;
+
+	
+	struct assoofs_inode_info *parent_inode_info;
+	struct assoofs_inode_info *deleted_inode_info;
+	
+	struct assoofs_inode_info *new_info;
+	struct assoofs_super_block_info *sb_info;
+	struct assoofs_dir_record_entry* record;
+	struct assoofs_dir_record_entry* dir_contents;
+	
+	int i;
+	
     printk(KERN_INFO "Peticion a eliminar un archivo.\n");
 
-    if (mutex_lock_interruptible(&assoofs_directory_children_update_lock)) {
-		printk(KERN_ERR "No se pudo bloquear el mutex\n");
-		return -1;
-	}
 
-    parent_inode_info = (struct assoofs_inode_info *)dir->i_private;
-    sb = dir->i_sb;
-    bh = sb_bread(sb, parent_inode_info->data_block_number);
-
-    //Busco el bloque y el inodo del archivo
-    nodo_buscado_info = (struct assoofs_inode_info *)dentry->d_inode->i_private;
-    block_no = nodo_buscado_info->data_block_number;
-	inode_no = nodo_buscado_info->inode_no;
+	deleted_inode_info = (struct assoofs_inode_info *)dentry->d_inode->i_private;
+	parent_inode_info = (struct assoofs_inode_info *)dir->i_private;
+	block_no = deleted_inode_info->data_block_number;
+	inode_no = deleted_inode_info->inode_no;
 	
-	//Recorro los nodos desde el que elimino hasta el final restandoles una posicion y asigno -1 al que borro
+	sb = dir->i_sb;
+	sb_info = sb->s_fs_info;
+	bh = sb_bread(sb, parent_inode_info->data_block_number);
 	
-
-	for(i = inode_no+1; i<=parent_inode_info->dir_children_count;i++){
-		
-		printk(KERN_INFO "Buscando inodo %d",i);
-		nodo_cambio_info = assoofs_get_inode_info(sb, i);
-		nodo_cambio_info->inode_no--;
-		assoofs_add_inode_info(sb, nodo_cambio_info);
-		printk(KERN_INFO "Inodo %d modificado, ahora es el nodo %lld", i, nodo_cambio_info->inode_no);
-		
-	}
-
-	//
-    sb_info = sb->s_fs_info;
-    sb_info->free_blocks |= (1 << block_no); //Libero el bloque
 	
+	record = (struct assoofs_dir_record_entry*)bh->b_data;
+	record +=parent_inode_info->dir_children_count-1; //Muevo record hasta el ultimo nodo
+	
+	last_inode_no = record->inode_no;
+	new_info = assoofs_get_inode_info(sb, last_inode_no); //Saco la informacion DEL ULTIMO NODO
+	
+	last_block_no = new_info->data_block_number; //Saco el numero de bloque
+	
+    sb_info->free_blocks |= (1 << last_block_no); //Libero el bloque del ultimo archivo del directorio
 	assoofs_save_sb_info(sb);
 	
-    if (mutex_lock_interruptible(&assoofs_inodes_lock)) {
-		mutex_unlock(&assoofs_directory_children_update_lock);
-        printk(KERN_ERR "No se pudo bloquear el mutex\n");
-		return -1;
+	new_info->inode_no = inode_no; //Le asigno el numero de inodo borrado
+	new_info->data_block_number = block_no; //Le asigno el numero de bloque del borrado
+	assoofs_save_inode_info(sb, new_info);	
+	
+	assoofs_destroy_inode(assoofs_get_inode(sb,last_inode_no));
+
+	/*Cambio el record entry*/
+	
+	dir_contents = (struct assoofs_dir_record_entry*)bh->b_data;
+	
+	for(i = 0; i<parent_inode_info->dir_children_count;i++){ //Muevo el puntero hasta llegar al archivo a eliminar
+		if(dir_contents->inode_no == inode_no)
+			break;
+		dir_contents++;
 	}
+	
+	//Modifico el nombre del archivo, ya que ya habia modificado su contenido
+	printk(KERN_INFO "Cambio el nombre de %s a %s",dir_contents->filename, record->filename);
+    strcpy(dir_contents->filename, record->filename);
 
-    parent_inode_info->dir_children_count--;
-    assoofs_save_inode_info(sb, parent_inode_info);
+	//Inutilizar el nodo
+	record->inode_no = -1;
+	strcpy(record->filename, "\0");
 
+    //Guardar cambios en disco
     mark_buffer_dirty(bh);
     sync_dirty_buffer(bh);
     brelse(bh);
+	
+	//Borro el ultimo hijo del padre, que es el que acabo de eliminar
+	parent_inode_info->dir_children_count--;
+    assoofs_save_inode_info(sb, parent_inode_info);
+	
+	//Reduzco la cuenta de nodos totales, para que se puedan volver a utilizar y los desvinculo
+	sb_info->inodes_count--;
+	assoofs_save_sb_info(sb);
 
-    mutex_unlock(&assoofs_inodes_lock);
-	mutex_unlock(&assoofs_directory_children_update_lock);
-
+	simple_unlink(dir,dentry);
+	d_invalidate(dentry);
+	
     printk(KERN_INFO "Archivo borrado correctamente");
     return 0;
 
@@ -586,10 +605,7 @@ static int assoofs_create_object(struct inode *dir , struct dentry *dentry, umod
 void assoofs_destroy_inode(struct inode *inode) {
 
     struct assoofs_inode *inode_info = inode->i_private;
-    struct super_block *sb = inode->i_sb;
-	
-	((struct assoofs_super_block_info*)sb->s_fs_info)->inodes_count--;
-	assoofs_save_sb_info(sb);
+
     printk(KERN_INFO "Eliminando datos privados del nodo %p ( %lu)\n", inode_info, inode->i_ino);
     kmem_cache_free(assoofs_inode_cache, inode_info);
 
